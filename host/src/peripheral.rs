@@ -4,7 +4,7 @@ use core::task::Poll;
 use bt_hci::cmd::le::{
     LeClearAdvSets, LeReadNumberOfSupportedAdvSets, LeSetAdvData, LeSetAdvEnable, LeSetAdvParams,
     LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable, LeSetExtAdvParams, LeSetExtScanResponseData,
-    LeSetScanResponseData,
+    LeSetScanResponseData, LeSetRandomAddr,
 };
 use bt_hci::controller::{Controller, ControllerCmdSync};
 use bt_hci::param::{AddrKind, AdvChannelMap, AdvHandle, AdvKind, AdvSet, BdAddr, LeConnRole, Operation};
@@ -29,10 +29,12 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
         &mut self,
         params: &AdvertisementParameters,
         data: Advertisement<'k>,
+        address: Option<Address>,
     ) -> Result<Advertiser<'d, C, P>, BleHostError<C::Error>>
     where
         C: for<'t> ControllerCmdSync<LeSetAdvData>
             + ControllerCmdSync<LeSetAdvParams>
+            + ControllerCmdSync<LeSetRandomAddr>
             + for<'t> ControllerCmdSync<LeSetAdvEnable>
             + for<'t> ControllerCmdSync<LeSetScanResponseData>,
     {
@@ -62,18 +64,23 @@ impl<'d, C: Controller, P: PacketPool> Peripheral<'d, C, P> {
             kind: AddrKind::PUBLIC,
             addr: BdAddr::default(),
         });
+        let address = address.or(host.address);
 
         host.command(LeSetAdvParams::new(
             bt_hci_duration(params.interval_min),
             bt_hci_duration(params.interval_max),
             kind,
-            host.address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
+            address.map(|a| a.kind).unwrap_or(AddrKind::PUBLIC),
             peer.kind,
             peer.addr,
             params.channel_map.unwrap_or(AdvChannelMap::ALL),
             params.filter_policy,
         ))
         .await?;
+
+        if let Some(address) = address.as_ref() {
+            host.command(LeSetRandomAddr::new(address.addr)).await?;
+        }
 
         if !data.adv_data.is_empty() {
             let mut buf = [0; 31];
